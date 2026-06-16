@@ -2,8 +2,9 @@ import { createServer, IncomingMessage, ServerResponse } from "node:http";
 import crypto from "node:crypto";
 import { z } from "zod";
 import { createLicense, listLicenses, reportUsage, revokeLicense, verifyLicense } from "./license.js";
-import { routeModelRequest, ModelProvider } from "./model-router.js";
-import { resolveProviderPool } from "./provider-pool.js";
+import { ModelProvider } from "./model-router.js";
+import { getPoolStatus, routeWithPool, estimateCredits } from "./key-pool.js";
+import { renderAdminHtml } from "./admin-ui.js";
 
 const port = Number(process.env.PORT ?? 9182);
 const proxyUrl = process.env.HTTPS_PROXY ?? process.env.HTTP_PROXY ?? "http://127.0.0.1:7993";
@@ -15,9 +16,14 @@ function sendJson(res: ServerResponse, status: number, body: unknown) {
     "content-type": "application/json; charset=utf-8",
     "access-control-allow-origin": "*",
     "access-control-allow-methods": "GET,POST,OPTIONS",
-    "access-control-allow-headers": "content-type,authorization",
+    "access-control-allow-headers": "content-type,authorization,x-license-key,x-device-id,x-provider,x-model,x-api-key,x-api-endpoint",
   });
   res.end(JSON.stringify(body, null, 2));
+}
+
+function sendHtml(res: ServerResponse, status: number, html: string) {
+  res.writeHead(status, { "content-type": "text/html; charset=utf-8" });
+  res.end(html);
 }
 
 async function readJson(req: IncomingMessage) {
@@ -31,19 +37,13 @@ function requireAdmin(req: IncomingMessage) {
   return req.headers.authorization === `Bearer ${adminToken}`;
 }
 
-const activateSchema = z.object({
-  licenseKey: z.string().min(1),
-  deviceId: z.string().min(1),
-});
+function headerString(req: IncomingMessage, name: string) {
+  const value = req.headers[name.toLowerCase()];
+  return Array.isArray(value) ? value[0] : value;
+}
 
-const usageSchema = z.object({
-  licenseKey: z.string().min(1),
-  deviceId: z.string().min(1),
-  creditsUsed: z.number().positive(),
-  action: z.string().default("unknown"),
-  model: z.string().optional(),
-});
-
+const activateSchema = z.object({ licenseKey: z.string().min(1), deviceId: z.string().min(1) });
+const usageSchema = z.object({ licenseKey: z.string().min(1), deviceId: z.string().min(1), creditsUsed: z.number().positive(), action: z.string().default("unknown"), model: z.string().optional() });
 const chatSchema = z.object({
   licenseKey: z.string().min(1),
   deviceId: z.string().min(1),
@@ -53,16 +53,31 @@ const chatSchema = z.object({
   customApiEndpoint: z.string().url().optional(),
   customApiKey: z.string().optional(),
 });
-
-const createKeysSchema = z.object({
-  plan: z.enum(["trial", "monthly", "yearly", "lifetime"]),
-  count: z.number().int().min(1).max(500),
-  days: z.number().int().min(1).max(3650).optional(),
-  dailyCreditLimit: z.number().positive().default(100),
-  maxDevices: z.number().int().min(1).max(20).default(1),
-});
-
+const createKeysSchema = z.object({ plan: z.enum(["trial", "monthly", "yearly", "lifetime"]), count: z.number().int().min(1).max(500), days: z.number().int().min(1).max(3650).optional(), dailyCreditLimit: z.number().positive().default(100), maxDevices: z.number().int().min(1).max(20).default(1) });
 const revokeSchema = z.object({ key: z.string().min(1) });
+
+async function handleChat(body: z.infer<typeof chatSchema>) {
+  const license = verifyLicense({ licenseKey: body.licenseKey, deviceId: body.deviceId });
+  if (!license.valid) return { status: 403, body: license };
+
+  const routed = await routeWithPool({
+    provider: body.provider as ModelProvider | undefined,
+    endpoint: body.customApiEndpoint,
+    apiKey: body.customApiKey,
+    model: body.model,
+    messages: body.messages,
+  });
+
+  reportUsage({
+    licenseKey: body.licenseKey,
+    deviceId: body.deviceId,
+    creditsUsed: estimateCredits(routed.model),
+    action: "ai.chat",
+    model: routed.model,
+  });
+
+  return { status: 200, body: { ok: true, ...routed } };
+}
 
 const server = createServer(async (req, res) => {
   if (req.method === "OPTIONS") return sendJson(res, 200, { ok: true });
@@ -70,6 +85,8 @@ const server = createServer(async (req, res) => {
   try {
     const host = req.headers.host ?? `localhost:${port}`;
     const url = new URL(req.url ?? "/", "http://" + host);
+
+    if (req.method === "GET" && url.pathname === "/admin") return sendHtml(res, 200, renderAdminHtml());
 
     if (req.method === "GET" && (url.pathname === "/" || url.pathname === "/health")) {
       return sendJson(res, 200, {
@@ -79,12 +96,7 @@ const server = createServer(async (req, res) => {
         workerId,
         proxyUrl,
         providers: ["openai-compatible", "anthropic", "gemini", "mock"],
-        serverSidePool: {
-          openai: Boolean(process.env.OPENAI_API_KEY),
-          anthropic: Boolean(process.env.ANTHROPIC_API_KEY),
-          gemini: Boolean(process.env.GEMINI_API_KEY),
-          deepseek: Boolean(process.env.DEEPSEEK_API_KEY),
-        },
+        pool: getPoolStatus(),
       });
     }
 
@@ -97,41 +109,30 @@ const server = createServer(async (req, res) => {
       const body = usageSchema.parse(await readJson(req));
       const updated = reportUsage(body);
       if (!updated) return sendJson(res, 404, { ok: false, error: "LICENSE_NOT_FOUND" });
-      return sendJson(res, 200, {
-        ok: true,
-        usedToday: updated.usedToday,
-        dailyCreditLimit: updated.dailyCreditLimit,
-      });
+      return sendJson(res, 200, { ok: true, usedToday: updated.usedToday, dailyCreditLimit: updated.dailyCreditLimit });
     }
 
     if (req.method === "POST" && url.pathname === "/api/ai/chat") {
-      const body = chatSchema.parse(await readJson(req));
-      const license = verifyLicense({ licenseKey: body.licenseKey, deviceId: body.deviceId });
-      if (!license.valid) return sendJson(res, 403, license);
+      const result = await handleChat(chatSchema.parse(await readJson(req)));
+      return sendJson(res, result.status, result.body);
+    }
 
-      const pool = resolveProviderPool({
-        provider: body.provider as ModelProvider | undefined,
-        endpoint: body.customApiEndpoint,
-        apiKey: body.customApiKey,
-        model: body.model,
+    // OpenAI-compatible local proxy endpoint. Use headers:
+    // x-license-key, x-device-id, x-provider, x-model, x-api-endpoint, x-api-key.
+    if (req.method === "POST" && url.pathname === "/v1/chat/completions") {
+      const raw = await readJson(req);
+      const model = String(raw.model ?? headerString(req, "x-model") ?? "gpt-4o-mini");
+      const body = chatSchema.parse({
+        licenseKey: headerString(req, "x-license-key") ?? raw.licenseKey,
+        deviceId: headerString(req, "x-device-id") ?? raw.deviceId ?? "proxy-device",
+        provider: headerString(req, "x-provider") ?? raw.provider,
+        model,
+        customApiEndpoint: headerString(req, "x-api-endpoint") ?? raw.customApiEndpoint,
+        customApiKey: headerString(req, "x-api-key") ?? raw.customApiKey,
+        messages: raw.messages,
       });
-
-      const result = await routeModelRequest({
-        provider: pool.provider,
-        endpoint: pool.endpoint,
-        apiKey: pool.apiKey,
-        model: pool.model,
-        messages: body.messages,
-      });
-
-      reportUsage({
-        licenseKey: body.licenseKey,
-        deviceId: body.deviceId,
-        creditsUsed: 1,
-        action: "ai.chat",
-        model: pool.model,
-      });
-      return sendJson(res, 200, { ok: true, provider: pool.provider, model: pool.model, result });
+      const result = await handleChat(body);
+      return sendJson(res, result.status, result.body);
     }
 
     if (url.pathname.startsWith("/api/admin/")) {
@@ -145,6 +146,10 @@ const server = createServer(async (req, res) => {
 
       if (req.method === "GET" && url.pathname === "/api/admin/licenses/list") {
         return sendJson(res, 200, { ok: true, licenses: listLicenses() });
+      }
+
+      if (req.method === "GET" && url.pathname === "/api/admin/pool/status") {
+        return sendJson(res, 200, { ok: true, pool: getPoolStatus() });
       }
 
       if (req.method === "POST" && url.pathname === "/api/admin/licenses/revoke") {

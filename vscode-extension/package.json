@@ -41,12 +41,14 @@
   },
   "scripts": {
     "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./"
+    "watch": "tsc -watch -p ./",
+    "package": "npm run compile && npx @vscode/vsce package --allow-missing-repository"
   },
   "dependencies": {},
   "devDependencies": {
     "@types/node": "latest",
     "@types/vscode": "latest",
-    "typescript": "latest"
+    "typescript": "latest",
+    "@vscode/vsce": "latest"
   }
 }
