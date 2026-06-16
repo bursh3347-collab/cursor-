@@ -1,9 +1,12 @@
 import { createServer, IncomingMessage, ServerResponse } from "node:http";
+import crypto from "node:crypto";
 import { z } from "zod";
 import { createLicense, reportUsage, verifyLicense } from "./license.js";
 
-const port = Number(process.env.PORT ?? 8787);
+const port = Number(process.env.PORT ?? 9182);
+const proxyUrl = process.env.HTTPS_PROXY ?? process.env.HTTP_PROXY ?? "http://127.0.0.1:7993";
 const adminToken = process.env.ADMIN_TOKEN ?? "change-me-admin-token";
+const workerId = crypto.randomBytes(16).toString("hex");
 
 function sendJson(res: ServerResponse, status: number, body: unknown) {
   res.writeHead(status, {
@@ -93,8 +96,14 @@ const server = createServer(async (req, res) => {
     const host = req.headers.host ?? `localhost:${port}`;
     const url = new URL(req.url ?? "/", "http://" + host);
 
-    if (req.method === "GET" && url.pathname === "/health") {
-      return sendJson(res, 200, { ok: true, service: "cursor-style-ai-worker-server" });
+    if (req.method === "GET" && (url.pathname === "/" || url.pathname === "/health")) {
+      return sendJson(res, 200, {
+        ok: true,
+        service: "cursor-style-ai-worker-server",
+        version: "1.1.57-compatible",
+        workerId,
+        proxyUrl,
+      });
     }
 
     if (req.method === "POST" && (url.pathname === "/api/license/activate" || url.pathname === "/api/license/verify")) {
@@ -144,6 +153,11 @@ const server = createServer(async (req, res) => {
   }
 });
 
+console.log(`upgrading ${crypto.createHash("md5").update(process.cwd()).digest("hex")}`);
+console.log(`starting ${workerId}`);
+console.log("version: 1.1.57-compatible");
+console.log(`HTTPS_PROXY ${proxyUrl}`);
+
 server.listen(port, () => {
-  console.log(`Cursor-style AI Worker server running at http://localhost:${port}`);
+  console.log(`Server is running on http://localhost:${port}/`);
 });

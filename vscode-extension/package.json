@@ -8,7 +8,10 @@
     "vscode": "^1.90.0"
   },
   "categories": ["Other"],
-  "activationEvents": ["onCommand:aiWorker.openUserCenter"],
+  "activationEvents": [
+    "onCommand:aiWorker.openUserCenter",
+    "onView:aiWorker.userCenter"
+  ],
   "main": "./dist/extension.js",
   "contributes": {
     "commands": [
@@ -16,7 +19,25 @@
         "command": "aiWorker.openUserCenter",
         "title": "Open AI Worker User Center"
       }
-    ]
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "aiWorker",
+          "title": "AI Worker",
+          "icon": "resources/ai-worker.svg"
+        }
+      ]
+    },
+    "views": {
+      "aiWorker": [
+        {
+          "id": "aiWorker.userCenter",
+          "name": "USER CENTER",
+          "type": "webview"
+        }
+      ]
+    }
   },
   "scripts": {
     "compile": "tsc -p ./",
