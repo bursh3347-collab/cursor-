@@ -202,7 +202,7 @@ export async function routeWithPool(args: {
 
   for (const entry of candidates) {
     try {
-      const model = args.model ?? entry.model ?? defaultModelFor(entry.provider);
+      const model = args.model ?? defaultModelFor(entry.provider);
       const endpoint = entry.provider === "gemini" && !entry.endpoint
         ? `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`
         : entry.endpoint;
