@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { db, LicensePlan, LicenseRecord, resetDailyUsageIfNeeded } from "./db.js";
+import { db, LicensePlan, LicenseRecord, resetDailyUsageIfNeeded, saveDb } from "./db.js";
 
 export type VerifyResult =
   | {
@@ -47,11 +47,25 @@ export function createLicense(args: {
     expiresAt,
     dailyCreditLimit: args.dailyCreditLimit,
     usedToday: 0,
+    usageDate: new Date().toISOString().slice(0, 10),
     maxDevices: args.maxDevices,
     devices: [],
     createdAt: new Date().toISOString(),
   };
   db.licenses.set(key, record);
+  saveDb();
+  return record;
+}
+
+export function listLicenses() {
+  return [...db.licenses.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
+export function revokeLicense(key: string) {
+  const record = db.licenses.get(key);
+  if (!record) return null;
+  record.status = "revoked";
+  saveDb();
   return record;
 }
 
@@ -79,6 +93,8 @@ export function verifyLicense(args: { licenseKey: string; deviceId: string }): V
   }
 
   if (record.expiresAt && new Date(record.expiresAt).getTime() < Date.now()) {
+    record.status = "expired";
+    saveDb();
     return {
       valid: false,
       userId: record.userId,
@@ -107,6 +123,7 @@ export function verifyLicense(args: { licenseKey: string; deviceId: string }): V
       };
     }
     record.devices.push(args.deviceId);
+    saveDb();
   }
 
   if (record.usedToday >= record.dailyCreditLimit) {
@@ -140,6 +157,7 @@ export function reportUsage(args: { licenseKey: string; deviceId: string; credit
   const record = db.licenses.get(args.licenseKey);
   if (!record) return null;
 
+  resetDailyUsageIfNeeded(record);
   record.usedToday += args.creditsUsed;
   db.usage.push({
     id: crypto.randomUUID(),
@@ -150,6 +168,7 @@ export function reportUsage(args: { licenseKey: string; deviceId: string; credit
     model: args.model,
     createdAt: new Date().toISOString(),
   });
+  saveDb();
 
   return record;
 }

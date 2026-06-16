@@ -1,8 +1,9 @@
 import { createServer, IncomingMessage, ServerResponse } from "node:http";
 import crypto from "node:crypto";
 import { z } from "zod";
-import { createLicense, reportUsage, verifyLicense } from "./license.js";
+import { createLicense, listLicenses, reportUsage, revokeLicense, verifyLicense } from "./license.js";
 import { routeModelRequest, ModelProvider } from "./model-router.js";
+import { resolveProviderPool } from "./provider-pool.js";
 
 const port = Number(process.env.PORT ?? 9182);
 const proxyUrl = process.env.HTTPS_PROXY ?? process.env.HTTP_PROXY ?? "http://127.0.0.1:7993";
@@ -24,6 +25,10 @@ async function readJson(req: IncomingMessage) {
   for await (const chunk of req) chunks.push(Buffer.from(chunk));
   const raw = Buffer.concat(chunks).toString("utf8");
   return raw ? JSON.parse(raw) : {};
+}
+
+function requireAdmin(req: IncomingMessage) {
+  return req.headers.authorization === `Bearer ${adminToken}`;
 }
 
 const activateSchema = z.object({
@@ -57,6 +62,8 @@ const createKeysSchema = z.object({
   maxDevices: z.number().int().min(1).max(20).default(1),
 });
 
+const revokeSchema = z.object({ key: z.string().min(1) });
+
 const server = createServer(async (req, res) => {
   if (req.method === "OPTIONS") return sendJson(res, 200, { ok: true });
 
@@ -72,6 +79,12 @@ const server = createServer(async (req, res) => {
         workerId,
         proxyUrl,
         providers: ["openai-compatible", "anthropic", "gemini", "mock"],
+        serverSidePool: {
+          openai: Boolean(process.env.OPENAI_API_KEY),
+          anthropic: Boolean(process.env.ANTHROPIC_API_KEY),
+          gemini: Boolean(process.env.GEMINI_API_KEY),
+          deepseek: Boolean(process.env.DEEPSEEK_API_KEY),
+        },
       });
     }
 
@@ -96,11 +109,18 @@ const server = createServer(async (req, res) => {
       const license = verifyLicense({ licenseKey: body.licenseKey, deviceId: body.deviceId });
       if (!license.valid) return sendJson(res, 403, license);
 
-      const result = await routeModelRequest({
+      const pool = resolveProviderPool({
         provider: body.provider as ModelProvider | undefined,
         endpoint: body.customApiEndpoint,
         apiKey: body.customApiKey,
         model: body.model,
+      });
+
+      const result = await routeModelRequest({
+        provider: pool.provider,
+        endpoint: pool.endpoint,
+        apiKey: pool.apiKey,
+        model: pool.model,
         messages: body.messages,
       });
 
@@ -109,18 +129,30 @@ const server = createServer(async (req, res) => {
         deviceId: body.deviceId,
         creditsUsed: 1,
         action: "ai.chat",
-        model: body.model,
+        model: pool.model,
       });
-      return sendJson(res, 200, { ok: true, result });
+      return sendJson(res, 200, { ok: true, provider: pool.provider, model: pool.model, result });
     }
 
-    if (req.method === "POST" && url.pathname === "/api/admin/licenses/create") {
-      if (req.headers.authorization !== `Bearer ${adminToken}`) {
-        return sendJson(res, 401, { ok: false, error: "UNAUTHORIZED" });
+    if (url.pathname.startsWith("/api/admin/")) {
+      if (!requireAdmin(req)) return sendJson(res, 401, { ok: false, error: "UNAUTHORIZED" });
+
+      if (req.method === "POST" && url.pathname === "/api/admin/licenses/create") {
+        const body = createKeysSchema.parse(await readJson(req));
+        const licenses = Array.from({ length: body.count }, () => createLicense(body));
+        return sendJson(res, 200, { ok: true, keys: licenses.map((item) => item.key), licenses });
       }
-      const body = createKeysSchema.parse(await readJson(req));
-      const licenses = Array.from({ length: body.count }, () => createLicense(body));
-      return sendJson(res, 200, { ok: true, keys: licenses.map((item) => item.key), licenses });
+
+      if (req.method === "GET" && url.pathname === "/api/admin/licenses/list") {
+        return sendJson(res, 200, { ok: true, licenses: listLicenses() });
+      }
+
+      if (req.method === "POST" && url.pathname === "/api/admin/licenses/revoke") {
+        const body = revokeSchema.parse(await readJson(req));
+        const license = revokeLicense(body.key);
+        if (!license) return sendJson(res, 404, { ok: false, error: "LICENSE_NOT_FOUND" });
+        return sendJson(res, 200, { ok: true, license });
+      }
     }
 
     return sendJson(res, 404, { ok: false, error: "NOT_FOUND" });
