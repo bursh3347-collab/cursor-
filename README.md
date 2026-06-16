@@ -10,6 +10,7 @@
 - API Worker 代理层
 - 用量上报
 - 管理员批量生成激活码
+- 多模型路由：OpenAI-compatible / Claude / Gemini / 本地模型
 
 > 重要：这个项目不破解 Cursor、Claude、OpenAI 或任何第三方服务，也不绕过付费限制。它做的是你自己的插件 + 你自己的授权系统 + 你自己的 API/BYOK/本地模型入口。
 
@@ -36,7 +37,7 @@ npm run dev
 默认地址：
 
 ```txt
-http://localhost:8787
+http://localhost:9182
 ```
 
 内置测试激活码：
@@ -62,12 +63,36 @@ npm run compile
 Open AI Worker User Center
 ```
 
+也可以从左侧 Activity Bar 打开：
+
+```txt
+AI Worker → USER CENTER
+```
+
+## 自动生成激活码
+
+先保持 server 正在运行，然后另开终端：
+
+```bash
+cd server
+npm run generate-keys -- --plan monthly --count 10 --days 30 --daily-credit-limit 100 --max-devices 1
+```
+
+更多说明见：
+
+```txt
+docs/license-admin.md
+docs/model-providers.md
+docs/architecture.md
+```
+
 ## 当前 MVP 功能
 
 - 输入激活码 Login
 - Refresh Status
 - 显示 User ID / Activation Code / Membership Status / Expiry Time / Today's used credits
 - 配置 Custom API
+- 选择 Provider / Model
 - Start API Worker
 - 后端验证 license 后再代理 AI 请求
 
