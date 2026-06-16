@@ -90,7 +90,8 @@ const server = createServer(async (req, res) => {
   if (req.method === "OPTIONS") return sendJson(res, 200, { ok: true });
 
   try {
-    const url = new URL(req.url ?? "/", `http://${req.headers.host ?? `localhost:${port}`}`);
+    const host = req.headers.host ?? `localhost:${port}`;
+    const url = new URL(req.url ?? "/", "http://" + host);
 
     if (req.method === "GET" && url.pathname === "/health") {
       return sendJson(res, 200, { ok: true, service: "cursor-style-ai-worker-server" });
