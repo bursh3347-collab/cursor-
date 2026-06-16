@@ -1,5 +1,8 @@
 import * as vscode from "vscode";
 import crypto from "node:crypto";
+import cp from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
 
 type WorkerConfig = {
   serverUrl: string;
@@ -12,8 +15,13 @@ type WorkerConfig = {
 };
 
 const CONFIG_KEY = "aiWorker.config";
+let serverProcess: cp.ChildProcess | undefined;
+let outputChannel: vscode.OutputChannel | undefined;
 
 export function activate(context: vscode.ExtensionContext) {
+  outputChannel = vscode.window.createOutputChannel("AI Worker");
+  context.subscriptions.push(outputChannel);
+
   const provider = new UserCenterProvider(context);
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider("aiWorker.userCenter", provider, {
@@ -21,18 +29,21 @@ export function activate(context: vscode.ExtensionContext) {
     }),
   );
 
-  const command = vscode.commands.registerCommand("aiWorker.openUserCenter", () => {
-    const panel = vscode.window.createWebviewPanel(
-      "aiWorkerUserCenter",
-      "AI Worker User Center",
-      vscode.ViewColumn.One,
-      { enableScripts: true, retainContextWhenHidden: true },
-    );
-
-    provider.bindWebview(panel.webview);
-  });
-
-  context.subscriptions.push(command);
+  context.subscriptions.push(
+    vscode.commands.registerCommand("aiWorker.openUserCenter", () => {
+      const panel = vscode.window.createWebviewPanel(
+        "aiWorkerUserCenter",
+        "AI Worker User Center",
+        vscode.ViewColumn.One,
+        { enableScripts: true, retainContextWhenHidden: true },
+      );
+      provider.bindWebview(panel.webview);
+    }),
+    vscode.commands.registerCommand("aiWorker.startLocalServer", async () => {
+      const result = await startLocalServer(context);
+      vscode.window.showInformationMessage(result.message);
+    }),
+  );
 }
 
 class UserCenterProvider implements vscode.WebviewViewProvider {
@@ -51,6 +62,11 @@ class UserCenterProvider implements vscode.WebviewViewProvider {
         const next = { ...getConfig(this.context), ...message.config };
         await this.context.globalState.update(CONFIG_KEY, next);
         webview.postMessage({ type: "configSaved", config: next });
+      }
+
+      if (message.type === "startLocalServer") {
+        const result = await startLocalServer(this.context);
+        webview.postMessage({ type: "localServerStarted", result });
       }
 
       if (message.type === "login" || message.type === "refresh") {
@@ -101,6 +117,53 @@ function toErrorStatus(error: unknown) {
     membershipStatus: "Error",
     reason: error instanceof Error ? error.message : String(error),
   };
+}
+
+function findServerDir(context: vscode.ExtensionContext) {
+  const candidates = [
+    vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ? path.join(vscode.workspace.workspaceFolders[0].uri.fsPath, "server") : undefined,
+    vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ? path.join(vscode.workspace.workspaceFolders[0].uri.fsPath, "..", "server") : undefined,
+    path.join(context.extensionPath, "..", "server"),
+    path.join(context.extensionPath, "server"),
+  ].filter(Boolean) as string[];
+
+  return candidates.find((candidate) => fs.existsSync(path.join(candidate, "package.json")) && fs.existsSync(path.join(candidate, "src", "server.ts")));
+}
+
+async function startLocalServer(context: vscode.ExtensionContext) {
+  if (serverProcess && !serverProcess.killed) {
+    return { ok: true, message: "Local server is already running." };
+  }
+
+  const serverDir = findServerDir(context);
+  if (!serverDir) {
+    return {
+      ok: false,
+      message: "Cannot find server folder. Open the repository root or vscode-extension folder in Cursor.",
+    };
+  }
+
+  if (!fs.existsSync(path.join(serverDir, ".env")) && fs.existsSync(path.join(serverDir, ".env.example"))) {
+    fs.copyFileSync(path.join(serverDir, ".env.example"), path.join(serverDir, ".env"));
+  }
+
+  const command = process.platform === "win32"
+    ? "if not exist node_modules npm install && npm run dev"
+    : "test -d node_modules || npm install; npm run dev";
+
+  outputChannel?.appendLine(`Starting AI Worker server in ${serverDir}`);
+  serverProcess = cp.spawn(command, {
+    cwd: serverDir,
+    shell: true,
+    env: { ...process.env, PORT: process.env.PORT ?? "9182" },
+  });
+
+  serverProcess.stdout?.on("data", (chunk) => outputChannel?.append(chunk.toString()));
+  serverProcess.stderr?.on("data", (chunk) => outputChannel?.append(chunk.toString()));
+  serverProcess.on("exit", (code) => outputChannel?.appendLine(`AI Worker server exited with code ${code}`));
+  outputChannel?.show(true);
+
+  return { ok: true, message: "Local server starting. Check AI Worker output panel." };
 }
 
 async function verify(config: WorkerConfig) {
@@ -162,6 +225,8 @@ function renderHtml(config: WorkerConfig) {
     <div class="muted" style="margin-top:8px">API Worker:</div>
     <code id="serverUrlText"></code>
   </div>
+
+  <button id="startServer" class="secondary">Start Local Server</button>
 
   <h3>Activation Login</h3>
   <input id="licenseKey" placeholder="Enter activation code" />
@@ -234,6 +299,7 @@ function renderHtml(config: WorkerConfig) {
 
     fillConfig(config);
 
+    $('startServer').onclick = () => vscode.postMessage({ type: 'startLocalServer' });
     $('save').onclick = () => vscode.postMessage({ type: 'saveConfig', config: collectConfig() });
     $('login').onclick = () => vscode.postMessage({ type: 'login', config: collectConfig() });
     $('refresh').onclick = () => vscode.postMessage({ type: 'refresh', config: collectConfig() });
@@ -245,6 +311,7 @@ function renderHtml(config: WorkerConfig) {
         fillConfig(message.config);
         $('log').textContent = 'Config saved.';
       }
+      if (message.type === 'localServerStarted') $('log').textContent = JSON.stringify(message.result, null, 2);
       if (message.type === 'status') renderStatus(message.status);
       if (message.type === 'workerStarted') $('log').textContent = JSON.stringify(message.result, null, 2);
     });
@@ -253,4 +320,6 @@ function renderHtml(config: WorkerConfig) {
 </html>`;
 }
 
-export function deactivate() {}
+export function deactivate() {
+  if (serverProcess && !serverProcess.killed) serverProcess.kill();
+}

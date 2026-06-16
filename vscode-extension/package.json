@@ -10,6 +10,7 @@
   "categories": ["Other"],
   "activationEvents": [
     "onCommand:aiWorker.openUserCenter",
+    "onCommand:aiWorker.startLocalServer",
     "onView:aiWorker.userCenter"
   ],
   "main": "./dist/extension.js",
@@ -18,6 +19,10 @@
       {
         "command": "aiWorker.openUserCenter",
         "title": "Open AI Worker User Center"
+      },
+      {
+        "command": "aiWorker.startLocalServer",
+        "title": "AI Worker: Start Local Server"
       }
     ],
     "viewsContainers": {
@@ -42,7 +47,7 @@
   "scripts": {
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "package": "npm run compile && npx @vscode/vsce package --allow-missing-repository"
+    "package": "npm run compile && vsce package --allow-missing-repository"
   },
   "dependencies": {},
   "devDependencies": {

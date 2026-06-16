@@ -44,6 +44,10 @@ function detectProvider(model?: string): ModelProvider {
   return "openai-compatible";
 }
 
+function geminiEndpoint(model: string) {
+  return "https://generativelanguage.googleapis.com/v1beta/models/" + encodeURIComponent(model) + ":generateContent";
+}
+
 function parseJsonPool(): KeyPoolEntry[] {
   const raw = process.env.MODEL_POOL_JSON;
   if (!raw) return [];
@@ -172,7 +176,6 @@ export async function routeWithPool(args: {
   model?: string;
   messages: ChatMessage[];
 }): Promise<RoutedModelResult> {
-  // BYOK/custom endpoint still wins.
   if (args.endpoint || args.apiKey) {
     const provider = args.provider ?? detectProvider(args.model);
     const result = await routeModelRequest({
@@ -203,9 +206,7 @@ export async function routeWithPool(args: {
   for (const entry of candidates) {
     try {
       const model = args.model ?? defaultModelFor(entry.provider);
-      const endpoint = entry.provider === "gemini" && !entry.endpoint
-        ? `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`
-        : entry.endpoint;
+      const endpoint = entry.provider === "gemini" && !entry.endpoint ? geminiEndpoint(model) : entry.endpoint;
       const result = await routeModelRequest({
         provider: entry.provider,
         endpoint,
