@@ -2,6 +2,7 @@ import { createServer, IncomingMessage, ServerResponse } from "node:http";
 import crypto from "node:crypto";
 import { z } from "zod";
 import { createLicense, reportUsage, verifyLicense } from "./license.js";
+import { routeModelRequest, ModelProvider } from "./model-router.js";
 
 const port = Number(process.env.PORT ?? 9182);
 const proxyUrl = process.env.HTTPS_PROXY ?? process.env.HTTP_PROXY ?? "http://127.0.0.1:7993";
@@ -25,40 +26,6 @@ async function readJson(req: IncomingMessage) {
   return raw ? JSON.parse(raw) : {};
 }
 
-async function proxyAiRequest(args: {
-  customApiEndpoint?: string;
-  customApiKey?: string;
-  messages: Array<{ role: string; content: string }>;
-  model?: string;
-}) {
-  if (!args.customApiEndpoint) {
-    return {
-      mode: "mock",
-      message: "API Worker is running. Configure customApiEndpoint to proxy real model requests.",
-      echo: args.messages.at(-1)?.content ?? "",
-    };
-  }
-
-  const response = await fetch(args.customApiEndpoint, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      ...(args.customApiKey ? { authorization: `Bearer ${args.customApiKey}` } : {}),
-    },
-    body: JSON.stringify({
-      model: args.model ?? "gpt-4o-mini",
-      messages: args.messages,
-    }),
-  });
-
-  const text = await response.text();
-  try {
-    return JSON.parse(text);
-  } catch {
-    return { raw: text };
-  }
-}
-
 const activateSchema = z.object({
   licenseKey: z.string().min(1),
   deviceId: z.string().min(1),
@@ -76,6 +43,7 @@ const chatSchema = z.object({
   licenseKey: z.string().min(1),
   deviceId: z.string().min(1),
   messages: z.array(z.object({ role: z.string(), content: z.string() })).min(1),
+  provider: z.enum(["openai-compatible", "anthropic", "gemini", "mock"]).optional(),
   model: z.string().optional(),
   customApiEndpoint: z.string().url().optional(),
   customApiKey: z.string().optional(),
@@ -103,6 +71,7 @@ const server = createServer(async (req, res) => {
         version: "1.1.57-compatible",
         workerId,
         proxyUrl,
+        providers: ["openai-compatible", "anthropic", "gemini", "mock"],
       });
     }
 
@@ -127,7 +96,14 @@ const server = createServer(async (req, res) => {
       const license = verifyLicense({ licenseKey: body.licenseKey, deviceId: body.deviceId });
       if (!license.valid) return sendJson(res, 403, license);
 
-      const result = await proxyAiRequest(body);
+      const result = await routeModelRequest({
+        provider: body.provider as ModelProvider | undefined,
+        endpoint: body.customApiEndpoint,
+        apiKey: body.customApiKey,
+        model: body.model,
+        messages: body.messages,
+      });
+
       reportUsage({
         licenseKey: body.licenseKey,
         deviceId: body.deviceId,

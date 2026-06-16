@@ -5,6 +5,8 @@ type WorkerConfig = {
   serverUrl: string;
   licenseKey: string;
   deviceId: string;
+  provider: string;
+  model: string;
   customApiEndpoint: string;
   customApiKey: string;
 };
@@ -82,6 +84,8 @@ function getConfig(context: vscode.ExtensionContext): WorkerConfig {
     serverUrl: saved.serverUrl ?? "http://localhost:9182",
     licenseKey: saved.licenseKey ?? "",
     deviceId: saved.deviceId ?? createDeviceId(),
+    provider: saved.provider ?? "openai-compatible",
+    model: saved.model ?? "gpt-4o-mini",
     customApiEndpoint: saved.customApiEndpoint ?? "",
     customApiKey: saved.customApiKey ?? "",
   };
@@ -115,6 +119,8 @@ async function startWorker(config: WorkerConfig) {
     body: JSON.stringify({
       licenseKey: config.licenseKey,
       deviceId: config.deviceId,
+      provider: config.provider,
+      model: config.model,
       customApiEndpoint: config.customApiEndpoint || undefined,
       customApiKey: config.customApiKey || undefined,
       messages: [{ role: "user", content: "Worker health check" }],
@@ -133,7 +139,7 @@ function renderHtml(config: WorkerConfig) {
     body { font-family: var(--vscode-font-family); padding: 12px; color: var(--vscode-foreground); background: var(--vscode-sideBar-background); }
     .box { border: 1px solid var(--vscode-panel-border); border-radius: 6px; padding: 12px; margin-bottom: 12px; text-align:center; }
     label { display:block; font-weight:700; margin: 12px 0 6px; text-align:left; }
-    input { width: 100%; box-sizing: border-box; padding: 8px; background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border); border-radius: 4px; }
+    input, select { width: 100%; box-sizing: border-box; padding: 8px; background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border); border-radius: 4px; }
     button { width: 100%; margin-top: 8px; padding: 8px; border: 0; border-radius: 4px; color: var(--vscode-button-foreground); background: var(--vscode-button-background); cursor: pointer; }
     button.secondary { background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); }
     .muted { color: var(--vscode-descriptionForeground); }
@@ -172,6 +178,15 @@ function renderHtml(config: WorkerConfig) {
   <h3>Config Custom API</h3>
   <label>Server URL</label>
   <input id="serverUrl" />
+  <label>Provider</label>
+  <select id="provider">
+    <option value="openai-compatible">OpenAI-compatible / DeepSeek / Qwen / Local</option>
+    <option value="anthropic">Anthropic Claude</option>
+    <option value="gemini">Google Gemini</option>
+    <option value="mock">Mock Test</option>
+  </select>
+  <label>Model</label>
+  <input id="model" placeholder="gpt-4o-mini / claude-3-5-sonnet-latest / gemini-1.5-pro" />
   <label>Custom API Endpoint</label>
   <input id="customApiEndpoint" placeholder="https://api.example.com/v1/chat/completions" />
   <label>Custom API Key</label>
@@ -190,6 +205,8 @@ function renderHtml(config: WorkerConfig) {
       $('serverUrl').value = next.serverUrl || 'http://localhost:9182';
       $('serverUrlText').textContent = next.serverUrl || 'http://localhost:9182';
       $('licenseKey').value = next.licenseKey || '';
+      $('provider').value = next.provider || 'openai-compatible';
+      $('model').value = next.model || 'gpt-4o-mini';
       $('customApiEndpoint').value = next.customApiEndpoint || '';
       $('customApiKey').value = next.customApiKey || '';
     }
@@ -198,6 +215,8 @@ function renderHtml(config: WorkerConfig) {
       return {
         serverUrl: $('serverUrl').value,
         licenseKey: $('licenseKey').value,
+        provider: $('provider').value,
+        model: $('model').value,
         customApiEndpoint: $('customApiEndpoint').value,
         customApiKey: $('customApiKey').value,
       };
