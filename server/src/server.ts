@@ -22,7 +22,12 @@ async function readJson(req: IncomingMessage) {
   return raw ? JSON.parse(raw) : {};
 }
 
-async function proxyAiRequest(args: { customApiEndpoint?: string; customApiKey?: string; messages: Array<{ role: string; content: string }>; model?: string }) {
+async function proxyAiRequest(args: {
+  customApiEndpoint?: string;
+  customApiKey?: string;
+  messages: Array<{ role: string; content: string }>;
+  model?: string;
+}) {
   if (!args.customApiEndpoint) {
     return {
       mode: "mock",
@@ -51,8 +56,19 @@ async function proxyAiRequest(args: { customApiEndpoint?: string; customApiKey?:
   }
 }
 
-const activateSchema = z.object({ licenseKey: z.string().min(1), deviceId: z.string().min(1) });
-const usageSchema = z.object({ licenseKey: z.string().min(1), deviceId: z.string().min(1), creditsUsed: z.number().positive(), action: z.string().default("unknown"), model: z.string().optional() });
+const activateSchema = z.object({
+  licenseKey: z.string().min(1),
+  deviceId: z.string().min(1),
+});
+
+const usageSchema = z.object({
+  licenseKey: z.string().min(1),
+  deviceId: z.string().min(1),
+  creditsUsed: z.number().positive(),
+  action: z.string().default("unknown"),
+  model: z.string().optional(),
+});
+
 const chatSchema = z.object({
   licenseKey: z.string().min(1),
   deviceId: z.string().min(1),
@@ -61,13 +77,20 @@ const chatSchema = z.object({
   customApiEndpoint: z.string().url().optional(),
   customApiKey: z.string().optional(),
 });
-const createKeysSchema = z.object({ plan: z.enum(["trial", "monthly", "yearly", "lifetime"]), count: z.number().int().min(1).max(500), days: z.number().int().min(1).max(3650).optional(), dailyCreditLimit: z.number().positive().default(100), maxDevices: z.number().int().min(1).max(20).default(1) });
+
+const createKeysSchema = z.object({
+  plan: z.enum(["trial", "monthly", "yearly", "lifetime"]),
+  count: z.number().int().min(1).max(500),
+  days: z.number().int().min(1).max(3650).optional(),
+  dailyCreditLimit: z.number().positive().default(100),
+  maxDevices: z.number().int().min(1).max(20).default(1),
+});
 
 const server = createServer(async (req, res) => {
   if (req.method === "OPTIONS") return sendJson(res, 200, { ok: true });
 
   try {
-    const url = new URL(req.url ?? "/", `http://${req.headers.host}`);
+    const url = new URL(req.url ?? "/", `http://${req.headers.host ?? `localhost:${port}`}`);
 
     if (req.method === "GET" && url.pathname === "/health") {
       return sendJson(res, 200, { ok: true, service: "cursor-style-ai-worker-server" });
@@ -82,7 +105,11 @@ const server = createServer(async (req, res) => {
       const body = usageSchema.parse(await readJson(req));
       const updated = reportUsage(body);
       if (!updated) return sendJson(res, 404, { ok: false, error: "LICENSE_NOT_FOUND" });
-      return sendJson(res, 200, { ok: true, usedToday: updated.usedToday, dailyCreditLimit: updated.dailyCreditLimit });
+      return sendJson(res, 200, {
+        ok: true,
+        usedToday: updated.usedToday,
+        dailyCreditLimit: updated.dailyCreditLimit,
+      });
     }
 
     if (req.method === "POST" && url.pathname === "/api/ai/chat") {
@@ -91,7 +118,13 @@ const server = createServer(async (req, res) => {
       if (!license.valid) return sendJson(res, 403, license);
 
       const result = await proxyAiRequest(body);
-      reportUsage({ licenseKey: body.licenseKey, deviceId: body.deviceId, creditsUsed: 1, action: "ai.chat", model: body.model });
+      reportUsage({
+        licenseKey: body.licenseKey,
+        deviceId: body.deviceId,
+        creditsUsed: 1,
+        action: "ai.chat",
+        model: body.model,
+      });
       return sendJson(res, 200, { ok: true, result });
     }
 
