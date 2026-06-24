@@ -1,0 +1,59 @@
+{
+  "name": "cursor-style-ai-worker",
+  "displayName": "Cursor-style AI Worker",
+  "description": "License-gated AI Worker sidebar for VS Code and Cursor.",
+  "version": "0.1.0",
+  "publisher": "xiahuaxian",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": ["Other"],
+  "activationEvents": [
+    "onCommand:aiWorker.openUserCenter",
+    "onCommand:aiWorker.startLocalServer",
+    "onView:aiWorker.userCenter"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "aiWorker.openUserCenter",
+        "title": "Open AI Worker User Center"
+      },
+      {
+        "command": "aiWorker.startLocalServer",
+        "title": "AI Worker: Start Local Server"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "aiWorker",
+          "title": "AI Worker",
+          "icon": "resources/ai-worker.svg"
+        }
+      ]
+    },
+    "views": {
+      "aiWorker": [
+        {
+          "id": "aiWorker.userCenter",
+          "name": "USER CENTER",
+          "type": "webview"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "npm run compile && vsce package --allow-missing-repository"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@types/node": "latest",
+    "@types/vscode": "latest",
+    "typescript": "latest",
+    "@vscode/vsce": "latest"
+  }
+}

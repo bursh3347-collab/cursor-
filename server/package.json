@@ -1,0 +1,21 @@
+{
+  "name": "cursor-style-ai-worker-server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "start": "tsx src/server.ts",
+    "shell": "tsx src/shell.ts",
+    "typecheck": "tsc --noEmit",
+    "generate-keys": "tsx scripts/generate-keys.ts"
+  },
+  "dependencies": {
+    "tsx": "latest",
+    "typescript": "latest",
+    "zod": "latest"
+  },
+  "devDependencies": {
+    "@types/node": "latest"
+  }
+}
